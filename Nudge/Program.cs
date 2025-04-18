@@ -345,7 +345,13 @@ namespace Nudge
         private static async Task CheckForUpdates()
         {
             // see if there's a newer version on github
-            string currentVersion = "1.0.0";
+            string currentVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+            // Convert from 1.0.0.0 format to 1.0.0 format if needed
+            if (currentVersion.Count(c => c == '.') == 3)
+            {
+                currentVersion = currentVersion.Substring(0, currentVersion.LastIndexOf('.'));
+            }
+            
             string repo = "crunny/Nudge";
             string apiUrl = $"https://api.github.com/repos/{repo}/releases/latest";
 
@@ -386,9 +392,22 @@ namespace Nudge
                                     {
                                         var fileBytes = await client.GetByteArrayAsync(url);
                                         await File.WriteAllBytesAsync(path, fileBytes);
-
+                                        
+                                        // get the folder path to open
+                                        string folderPath = Path.GetDirectoryName(path) ?? Path.GetTempPath();
+                                        
+                                        // open the folder and select the file
+                                        OpenFolderAndSelectFile(path);
+                                        
                                         MessageBox.Show(
-                                            $"Update downloaded at: {path}\nPlease extract and replace the current version manually.",
+                                            $"Update downloaded successfully!\n\n" +
+                                            $"Installation Instructions:\n" +
+                                            $"1. The download folder has been opened for you\n" +
+                                            $"2. Extract the ZIP file to a temporary location\n" +
+                                            $"3. Close Nudge by right-clicking the tray icon and selecting 'Exit'\n" +
+                                            $"4. Copy all files from the extracted folder to your Nudge installation folder\n" +
+                                            $"5. Restart Nudge\n\n" +
+                                            $"Download location: {path}",
                                             "Download Complete",
                                             MessageBoxButtons.OK,
                                             MessageBoxIcon.Information);
@@ -441,6 +460,43 @@ namespace Nudge
                 trayIcon = null;
             }
         }
+        
+        private static void OpenFolderAndSelectFile(string filePath)
+        {
+            // opens Windows Explorer and selects the file
+            if (!File.Exists(filePath))
+            {
+                return;
+            }
+            
+            // ensure the path is properly formatted
+            filePath = Path.GetFullPath(filePath);
+            
+            try
+            {
+                // open Explorer and select the file
+                System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{filePath}\"");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error opening folder: {ex.Message}");
+                
+                // fallback: just open the containing folder
+                try 
+                {
+                    string? folder = Path.GetDirectoryName(filePath);
+                    if (!string.IsNullOrEmpty(folder))
+                    {
+                        System.Diagnostics.Process.Start("explorer.exe", folder);
+                    }
+                }
+                catch 
+                {
+                    // silently fail on fallback
+                }
+            }
+        }
+
     }
 
     // invisible form to handle messages

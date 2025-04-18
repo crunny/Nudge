@@ -463,32 +463,34 @@ namespace Nudge
         {
             try
             {
-                // check assets folder
+                // First try Assets subfolder in the application directory
                 string logoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "NudgeLogo.png");
                 
-                // if not found, look in project
+                // Log the paths we're searching (helpful for debugging)
+                System.Diagnostics.Debug.WriteLine($"Looking for logo at: {logoPath}");
+                
+                // If not found, check executable directory directly
                 if (!File.Exists(logoPath))
                 {
-                    // get exe dir
-                    string exeDir = AppDomain.CurrentDomain.BaseDirectory;
-                    
-                    // go up to find project root
-                    DirectoryInfo? dir = new DirectoryInfo(exeDir);
-                    while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Assets", "NudgeLogo.png")))
+                    logoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NudgeLogo.png");
+                    System.Diagnostics.Debug.WriteLine($"Looking for logo at: {logoPath}");
+                }
+                
+                // If still not found, try one level up (for development environment)
+                if (!File.Exists(logoPath))
+                {
+                    string? parentDir = Path.GetDirectoryName(AppDomain.CurrentDomain.BaseDirectory);
+                    if (parentDir != null)
                     {
-                        dir = dir.Parent;
-                    }
-                    
-                    // found it
-                    if (dir != null)
-                    {
-                        logoPath = Path.Combine(dir.FullName, "Assets", "NudgeLogo.png");
+                        logoPath = Path.Combine(parentDir, "Assets", "NudgeLogo.png");
+                        System.Diagnostics.Debug.WriteLine($"Looking for logo at: {logoPath}");
                     }
                 }
                 
                 // load png if it exists
                 if (File.Exists(logoPath))
                 {
+                    System.Diagnostics.Debug.WriteLine($"Found logo at: {logoPath}");
                     using (Image originalImage = Image.FromFile(logoPath))
                     {
                         // resize it nicely
@@ -504,6 +506,9 @@ namespace Nudge
                         return resizedImage;
                     }
                 }
+                
+                // If we're here, we couldn't find the PNG, so log the error
+                System.Diagnostics.Debug.WriteLine("Logo PNG not found, falling back to icon");
                 
                 // use icon if png not found
                 return CreateIconFromAppIcon();
