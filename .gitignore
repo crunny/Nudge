@@ -1,0 +1,24 @@
+# Build output
+bin/          
+# Build intermediates
+obj/          
+# Local editor settings
+.vscode/      
+# User-specific settings
+*.user        
+# Solution user options
+*.suo         
+# Misc cache files
+*.cache       
+# Any stray database files
+*.db          
+# Log files, if any
+*.log         
+# Debug symbols
+*.pdb         
+# Built binaries
+*.exe         
+# Built libraries
+*.dll         
+# Temp files
+*.tmp         
