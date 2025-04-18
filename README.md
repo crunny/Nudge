@@ -1,7 +1,5 @@
-# Nudge 📋
-
 <p align="center">
-  <img src="Nudge/Assets/NudgeBanner.png" width="800" alt="Nudge Banner">
+  <img src="Nudge/Assets/NudgeBanner.png" width="600" alt="Nudge Banner">
 </p>
 
 A minimal, elegant clipboard notification utility for Windows.
