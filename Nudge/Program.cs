@@ -11,6 +11,7 @@ namespace Nudge
     using System.IO;
     using System.Reflection;
     using System.Security;
+    using System.Threading.Tasks;
 
     // watches for clipboard changes
     public class ClipboardMonitor : IDisposable
@@ -121,6 +122,9 @@ namespace Nudge
                     startupEnabled ? "Disable Startup with Windows" : "Enable Startup with Windows");
                 startupMenuItem.Checked = startupEnabled;
                 startupMenuItem.Click += OnToggleStartup;
+
+                // check for updates
+                trayMenu.Items.Add("Check for Updates", null, async (sender, e) => { await CheckForUpdates(); });
                 
                 trayMenu.Items.Add(startupMenuItem);
                 trayMenu.Items.Add("-"); // divider
@@ -160,6 +164,7 @@ namespace Nudge
         
         private static void LoadApplicationIcon()
         {
+            // load the application icon
             try
             {
                 // try assets folder first
@@ -202,6 +207,7 @@ namespace Nudge
         
         private static void HandleClipboardChange()
         {
+            // handle clipboard changes
             try 
             {
                 if (Clipboard.ContainsText() || Clipboard.ContainsImage() || 
@@ -233,6 +239,7 @@ namespace Nudge
 
         public static void ShowNotification()
         {
+            // show a notification
             try
             {
                 // popup the notification
@@ -261,6 +268,7 @@ namespace Nudge
 
         private static void OnToggleStartup(object? sender, EventArgs e)
         {
+            // toggle startup setting
             if (sender is ToolStripMenuItem item)
             {
                 bool isEnabled = item.Checked;
@@ -285,6 +293,7 @@ namespace Nudge
 
         private static void EnableStartup()
         {
+            // add app to windows startup
             try
             {
                 RegistryKey? rk = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", true);
@@ -303,6 +312,7 @@ namespace Nudge
 
         private static void DisableStartup()
         {
+            // remove app from windows startup
             try
             {
                 RegistryKey? rk = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", true);
@@ -320,6 +330,7 @@ namespace Nudge
 
         private static bool IsStartupEnabled()
         {
+            // check if we're set to run when windows starts
             try
             {
                 RegistryKey? rk = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", false);
@@ -331,14 +342,98 @@ namespace Nudge
             }
         }
 
+        private static async Task CheckForUpdates()
+        {
+            // see if there's a newer version on github
+            string currentVersion = "1.0.0";
+            string repo = "crunny/Nudge";
+            string apiUrl = $"https://api.github.com/repos/{repo}/releases/latest";
+
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Nudge-Updater");
+
+            try
+            {
+                var response = await client.GetStringAsync(apiUrl);
+                var release = System.Text.Json.JsonDocument.Parse(response).RootElement;
+
+                var latestVersion = release.GetProperty("tag_name").GetString()?.TrimStart('v');
+
+                if (latestVersion != null && latestVersion != currentVersion)
+                {
+                    // found a new version - ask if they want it
+                    var result = MessageBox.Show(
+                        $"Update available: {latestVersion}. Do you want to download it?",
+                        "Nudge Update", 
+                        MessageBoxButtons.YesNo, 
+                        MessageBoxIcon.Information);
+
+                    if (result == DialogResult.Yes)
+                    {
+                        // look for zip files in the release assets
+                        var assets = release.GetProperty("assets");
+                        foreach (var asset in assets.EnumerateArray())
+                        {
+                            var name = asset.GetProperty("name").GetString();
+                            if (name != null && name.EndsWith(".zip"))
+                            {
+                                var url = asset.GetProperty("browser_download_url").GetString();
+                                if (url != null)
+                                {
+                                    var path = Path.Combine(Path.GetTempPath(), name);
+
+                                    try
+                                    {
+                                        var fileBytes = await client.GetByteArrayAsync(url);
+                                        await File.WriteAllBytesAsync(path, fileBytes);
+
+                                        MessageBox.Show(
+                                            $"Update downloaded at: {path}\nPlease extract and replace the current version manually.",
+                                            "Download Complete",
+                                            MessageBoxButtons.OK,
+                                            MessageBoxIcon.Information);
+                                        break;
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        MessageBox.Show(
+                                            $"Failed to download update: {ex.Message}",
+                                            "Download Failed",
+                                            MessageBoxButtons.OK,
+                                            MessageBoxIcon.Error);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    MessageBox.Show(
+                        "You are already using the latest version.",
+                        "Nudge Update",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Error checking for updates: {ex.Message}",
+                    "Update Check Failed",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+
         private static void OnProcessExit(object? sender, EventArgs e)
         {
             // cleanup time
             NudgeNotification.CleanupCachedResources();
-            
+
             clipboardMonitor?.Dispose();
             clipboardMonitor = null;
-            
+
             if (trayIcon != null)
             {
                 trayIcon.Visible = false;

@@ -1,17 +1,18 @@
-// Nudge - Clipboard notification utility
-// Copyright (c) 2025 crunny
-// All rights reserved.
+// nudge - clipboard notification utility
+// copyright (c) 2025 crunny
+// all rights reserved.
 using System;
 using System.Linq;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.IO;
 
 namespace Nudge
 {
-    // extension for making rounded rectangles
+    // helps make rounded rectangles
     public static class GraphicsExtensions
     {
         public static void AddRoundedRectangle(this GraphicsPath path, RectangleF rect, float radius)
@@ -37,10 +38,49 @@ namespace Nudge
             
             path.CloseFigure();
         }
+        
+        // drop shadow for ios-like effect
+        public static void DrawModernShadow(this Graphics g, GraphicsPath path, Color shadowColor, int depth, int blur, Point offset)
+        {
+            // make a bigger path for the shadow
+            RectangleF bounds = path.GetBounds();
+            bounds.Inflate(blur / 2, blur / 2);
+            bounds.Offset(offset.X, offset.Y);
+            
+            // layer shadows for a better look
+            for (int i = 1; i <= depth; i++)
+            {
+                float alpha = (float)(depth - i + 1) / (depth * 1.5f);
+                using (GraphicsPath shadowPath = (GraphicsPath)path.Clone())
+                {
+                    Matrix translateMatrix = new Matrix();
+                    translateMatrix.Translate(offset.X * (i / (float)depth), offset.Y * (i / (float)depth));
+                    shadowPath.Transform(translateMatrix);
+                    
+                    using (PathGradientBrush shadowBrush = new PathGradientBrush(shadowPath))
+                    {
+                        Color semiTransparentShadow = Color.FromArgb((int)(shadowColor.A * alpha * 0.7), shadowColor);
+                        Color transparentShadow = Color.FromArgb(0, shadowColor);
+                        
+                        shadowBrush.CenterColor = semiTransparentShadow;
+                        shadowBrush.SurroundColors = new Color[] { transparentShadow };
+                        shadowBrush.FocusScales = new PointF(0.95f, 0.85f);
+                        
+                        g.FillPath(shadowBrush, shadowPath);
+                    }
+                }
+            }
+        }
     }
 
     public class NudgeNotification : Form
     {
+        // colors
+        private static readonly Color BackgroundColor = ColorTranslator.FromHtml("#101828"); // dark navy
+        private static readonly Color AccentColor = ColorTranslator.FromHtml("#00D492");     // bright green
+        private static readonly Color TextColor = Color.White;
+        private static readonly Color SecondaryTextColor = Color.FromArgb(220, 220, 220);
+        
         // cache for stuff we use a lot
         private static readonly object _cacheLock = new object();
         private static Image? _cachedClipboardIcon = null;
@@ -58,7 +98,7 @@ namespace Nudge
             }
         }
         
-        private static readonly int DELAY_BEFORE_FADEOUT = 1500; // 1.5 seconds
+        private static readonly int DELAY_BEFORE_FADEOUT = 1800; // 1.8 seconds
         private readonly string _clipboardContent;
         private Point _finalPosition;
         private Point _startPosition;
@@ -68,19 +108,23 @@ namespace Nudge
         private System.Windows.Forms.Timer? _fadeOutTimer;
         private bool _disposed;
         
-        // p/invoke stuff for drop shadow
+        // p/invoke stuff for shadows
         [DllImport("user32.dll")]
         private static extern int SetClassLong(IntPtr hwnd, int nIndex, int dwNewLong);
         
         [DllImport("user32.dll")]
         private static extern int GetClassLong(IntPtr hwnd, int nIndex);
         
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
         private const int GCL_STYLE = -26;
         private const int CS_DROPSHADOW = 0x20000;
 
         public NudgeNotification()
         {
-            // get clipboard content for the notification
+            // grab clipboard content
             try
             {
                 if (Clipboard.ContainsText())
@@ -92,7 +136,7 @@ namespace Nudge
                     }
                     else
                     {
-                        // cut off long text
+                        // trim long text
                         if (text.Length > 50)
                         {
                             _clipboardContent = text.Substring(0, 47) + "...";
@@ -102,7 +146,7 @@ namespace Nudge
                             _clipboardContent = text;
                         }
                         
-                        // replace control chars that mess up display
+                        // fix control chars
                         _clipboardContent = string.Join("", 
                             _clipboardContent.Select(c => char.IsControl(c) ? ' ' : c));
                     }
@@ -126,7 +170,7 @@ namespace Nudge
             }
             catch (ExternalException ex)
             {
-                // clipboard access error
+                // clipboard error
                 System.Diagnostics.Debug.WriteLine($"Clipboard access error: {ex.Message}");
                 _clipboardContent = "[Content copied]";
             }
@@ -145,11 +189,11 @@ namespace Nudge
             this.FormBorderStyle = FormBorderStyle.None;
             this.ShowInTaskbar = false;
             this.TopMost = true;
-            this.BackColor = Color.FromArgb(58, 58, 60); // dark background
-            this.ForeColor = Color.White;
-            this.Opacity = 0; // start invisible to avoid flashing
-            this.Width = 320; 
-            this.Height = 90; 
+            this.BackColor = BackgroundColor;
+            this.ForeColor = TextColor;
+            this.Opacity = 0; // start invisible
+            this.Width = 340; 
+            this.Height = 85; 
             
             // smooth rendering
             this.SetStyle(ControlStyles.AllPaintingInWmPaint | 
@@ -157,26 +201,26 @@ namespace Nudge
                           ControlStyles.DoubleBuffer | 
                           ControlStyles.OptimizedDoubleBuffer, true);
             
-            // multi-screen support - find active screen
+            // find active screen
             Screen activeScreen = GetActiveScreen();
             int screenWidth = activeScreen.WorkingArea.Width;
             int screenHeight = activeScreen.WorkingArea.Height;
             
             int centerX = activeScreen.WorkingArea.Left + (screenWidth - this.Width) / 2;
             
-            // positions for animation
-            _finalPosition = new Point(centerX, activeScreen.WorkingArea.Top + 40);
-            _startPosition = new Point(centerX, activeScreen.WorkingArea.Top - this.Height); // start above screen
-            _endPosition = new Point(centerX, activeScreen.WorkingArea.Top - this.Height); // end above screen
+            // animation positions
+            _finalPosition = new Point(centerX, activeScreen.WorkingArea.Top + 30);
+            _startPosition = new Point(centerX, activeScreen.WorkingArea.Top - this.Height); // off-screen
+            _endPosition = new Point(centerX, activeScreen.WorkingArea.Top - this.Height); // off-screen
             
-            // start off-screen
+            // start position
             this.Location = _startPosition;
 
-            // content panel layout
+            // content panel
             Panel contentPanel = new Panel
             {
                 Dock = DockStyle.Fill,
-                Padding = new Padding(15),
+                Padding = new Padding(18),
                 BackColor = Color.Transparent
             };
             this.Controls.Add(contentPanel);
@@ -187,24 +231,35 @@ namespace Nudge
             // animation setup
             this.Load += OnFormLoad;
             
-            // add drop shadow when form is created
+            // add shadow when form is created
             this.HandleCreated += (s, e) => {
                 SetClassLong(this.Handle, GCL_STYLE, GetClassLong(this.Handle, GCL_STYLE) | CS_DROPSHADOW);
+                
+                // try dark mode on windows 11
+                try
+                {
+                    int darkMode = 1;
+                    DwmSetWindowAttribute(this.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+                }
+                catch
+                {
+                    // no biggie if not supported
+                }
             };
         }
         
-        // find the screen with active window or mouse
+        // find screen with active window or mouse
         private Screen GetActiveScreen()
         {
             try
             {
-                // try to get screen with active window
+                // check active window screen
                 IntPtr activeWindowHandle = GetForegroundWindow();
                 if (activeWindowHandle != IntPtr.Zero)
                 {
                     if (GetWindowRect(activeWindowHandle, out RECT windowRect))
                     {
-                        // find screen with center of active window
+                        // find screen with window center
                         Point centerPoint = new Point(
                             (windowRect.Left + windowRect.Right) / 2,
                             (windowRect.Top + windowRect.Bottom) / 2
@@ -218,7 +273,7 @@ namespace Nudge
                     }
                 }
                 
-                // try to get screen with mouse cursor
+                // check mouse cursor screen
                 Point cursorPosition;
                 GetCursorPos(out cursorPosition);
                 
@@ -260,102 +315,112 @@ namespace Nudge
 
         private void AddNotificationContent(Panel contentPanel)
         {
-            // app icon - centered vertically
+            // app icon
             PictureBox iconBox = new PictureBox
             {
-                Size = new Size(40, 40),
-                Location = new Point(12, 25),
+                Size = new Size(36, 36),
+                Location = new Point(15, 22),
                 BackColor = Color.Transparent,
                 SizeMode = PictureBoxSizeMode.StretchImage
             };
             
-            // use cached icon or create new one
+            // use cached icon or make new one
             if (_cachedClipboardIcon == null)
             {
                 lock (_cacheLock)
                 {
-                    // double-check to avoid race conditions
+                    // double-check
                     if (_cachedClipboardIcon == null)
                     {
-                        // use the logo png instead of icon
+                        // use logo png
                         _cachedClipboardIcon = CreateIconFromAppLogo();
                     }
                 }
             }
             
-            // clone image for this notification
-            iconBox.Image = (Image)_cachedClipboardIcon.Clone();
+            // clone image and apply accent color
+            iconBox.Image = ApplyAccentColorToImage((Image)_cachedClipboardIcon.Clone());
             contentPanel.Controls.Add(iconBox);
 
-            // container for text elements
+            // text container
             Panel textContainer = new Panel
             {
-                Size = new Size(this.Width - 75, this.Height - 30),
-                Location = new Point(62, 20),
+                Size = new Size(this.Width - 85, this.Height - 30),
+                Location = new Point(62, 15),
                 BackColor = Color.Transparent,
             };
             contentPanel.Controls.Add(textContainer);
 
-            // create fonts
-            Font headerFont = CreatePoppinsFont(12f, FontStyle.Bold);
-            Font contentFont = CreatePoppinsFont(11f, FontStyle.Regular);
+            // fonts
+            Font headerFont = CreateModernFont(12f, FontStyle.Bold);
+            Font contentFont = CreateModernFont(11f, FontStyle.Regular);
 
-            // header label
+            // header
             Label lblHeader = new Label
             {
                 Text = "Nudge - Copied",
                 Font = headerFont,
-                ForeColor = Color.White,
+                ForeColor = AccentColor,
                 AutoSize = true,
                 Location = new Point(0, 0),
                 BackColor = Color.Transparent,
             };
             textContainer.Controls.Add(lblHeader);
 
-            // content label
+            // content
             Label lblContent = new Label
             {
                 Text = _clipboardContent,
                 Font = contentFont,
-                ForeColor = Color.FromArgb(230, 230, 230),
+                ForeColor = SecondaryTextColor,
                 AutoSize = false,
-                Size = new Size(this.Width - 80, 35),
+                Size = new Size(this.Width - 95, 35),
                 Location = new Point(0, 26),
                 AutoEllipsis = true,
                 BackColor = Color.Transparent,
+                UseMnemonic = false // no & as access key
             };
             textContainer.Controls.Add(lblContent);
         }
-        
-        // create poppins font with fallbacks
-        private Font CreatePoppinsFont(float size, FontStyle style)
+
+        // apply accent color to icon
+        private Image ApplyAccentColorToImage(Image originalImage)
         {
-            try
+            Bitmap result = new Bitmap(originalImage.Width, originalImage.Height);
+            using (Graphics graphics = Graphics.FromImage(result))
             {
-                // check if poppins is installed
-                using (var fontCollection = new System.Drawing.Text.PrivateFontCollection())
+                // color matrix to keep alpha but use accent color
+                float r = AccentColor.R / 255f;
+                float green = AccentColor.G / 255f;
+                float b = AccentColor.B / 255f;
+                
+                ColorMatrix colorMatrix = new ColorMatrix(new float[][]
                 {
-                    FontFamily[] families = FontFamily.Families;
-                    foreach (FontFamily family in families)
-                    {
-                        if (family.Name.Equals("Poppins", StringComparison.OrdinalIgnoreCase))
-                        {
-                            return new Font("Poppins", size, style, GraphicsUnit.Point);
-                        }
-                    }
-                    
-                    // font not found, use segoe ui instead
-                    return new Font("Segoe UI", size, style, GraphicsUnit.Point);
+                    new float[] {0, 0, 0, 0, 0},
+                    new float[] {0, 0, 0, 0, 0},
+                    new float[] {0, 0, 0, 0, 0},
+                    new float[] {0, 0, 0, 1, 0},
+                    new float[] {r, green, b, 0, 1}
+                });
+                
+                using (ImageAttributes attributes = new ImageAttributes())
+                {
+                    attributes.SetColorMatrix(colorMatrix);
+                    graphics.DrawImage(originalImage, new Rectangle(0, 0, originalImage.Width, originalImage.Height),
+                        0, 0, originalImage.Width, originalImage.Height, GraphicsUnit.Pixel, attributes);
                 }
             }
-            catch
-            {
-                // fallback if something breaks
-                return new Font("Segoe UI", size, style, GraphicsUnit.Point);
-            }
+            return result;
+        }
+        
+        // font creation
+        private Font CreateModernFont(float size, FontStyle style)
+        {
+            // use segoe ui for modern look
+            return new Font("Segoe UI", size, style, GraphicsUnit.Point);
         }
 
-        // create icon from app icon
+        // get icon from app icon
         private static Image CreateIconFromAppIcon()
         {
             try
@@ -388,58 +453,59 @@ namespace Nudge
             {
                 System.Diagnostics.Debug.WriteLine($"Error loading app icon: {ex.Message}");
                 
-                // fallback to system icon
+                // use system icon
                 return new Bitmap(SystemIcons.Application.ToBitmap(), 24, 24);
             }
         }
 
-        // create icon from logo png
+        // get icon from logo png
         private static Image CreateIconFromAppLogo()
         {
             try
             {
-                // look for png in assets folder
+                // check assets folder
                 string logoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "NudgeLogo.png");
                 
-                // if not found, check project folder
+                // if not found, look in project
                 if (!File.Exists(logoPath))
                 {
                     // get exe dir
                     string exeDir = AppDomain.CurrentDomain.BaseDirectory;
                     
-                    // navigate up to find project root
+                    // go up to find project root
                     DirectoryInfo? dir = new DirectoryInfo(exeDir);
                     while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Assets", "NudgeLogo.png")))
                     {
                         dir = dir.Parent;
                     }
                     
-                    // if found the parent dir with assets folder
+                    // found it
                     if (dir != null)
                     {
                         logoPath = Path.Combine(dir.FullName, "Assets", "NudgeLogo.png");
                     }
                 }
                 
-                // if png exists, load it
+                // load png if it exists
                 if (File.Exists(logoPath))
                 {
                     using (Image originalImage = Image.FromFile(logoPath))
                     {
-                        // create a resized copy - 40x40
+                        // resize it nicely
                         Bitmap resizedImage = new Bitmap(40, 40);
                         using (Graphics g = Graphics.FromImage(resizedImage))
                         {
                             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                             g.SmoothingMode = SmoothingMode.AntiAlias;
                             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                            g.CompositingQuality = CompositingQuality.HighQuality;
                             g.DrawImage(originalImage, 0, 0, 40, 40);
                         }
                         return resizedImage;
                     }
                 }
                 
-                // fallback if png not found
+                // use icon if png not found
                 return CreateIconFromAppIcon();
             }
             catch (Exception ex)
@@ -452,27 +518,27 @@ namespace Nudge
 
         private void OnFormLoad(object? sender, EventArgs e)
         {
-            // position form before showing
+            // set position
             this.Location = _startPosition;
             
             _animationTimer = new System.Windows.Forms.Timer
             {
-                Interval = 10 // higher framerate = smoother
+                Interval = 8 // ~120fps
             };
             
             int animationStep = 0;
-            int maxAnimationSteps = 20; // more steps = smoother
+            int maxAnimationSteps = 24; // smooth animation
             
             _animationTimer.Tick += (s, ev) =>
             {
-                // calculate fade and position with easing
+                // animate with easing
                 animationStep++;
-                double progress = EaseOutCubic((double)animationStep / maxAnimationSteps);
+                double progress = EaseOutQuint((double)animationStep / maxAnimationSteps);
                 
-                // increase opacity as we animate
-                this.Opacity = Math.Min(0.95, progress);
+                // fade in
+                this.Opacity = Math.Min(0.98, progress);
                 
-                // position with cubic easing
+                // slide down
                 int newY = _startPosition.Y + (int)((double)(_finalPosition.Y - _startPosition.Y) * progress);
                 this.Location = new Point(_startPosition.X, newY);
                 
@@ -480,9 +546,9 @@ namespace Nudge
                 {
                     _animationTimer.Stop();
                     this.Location = _finalPosition;
-                    this.Opacity = 0.95;
+                    this.Opacity = 0.98;
                     
-                    // wait before fading out
+                    // wait before disappearing
                     _delayTimer = new System.Windows.Forms.Timer
                     {
                         Interval = DELAY_BEFORE_FADEOUT
@@ -494,19 +560,19 @@ namespace Nudge
                         
                         _fadeOutTimer = new System.Windows.Forms.Timer
                         {
-                            Interval = 10
+                            Interval = 8
                         };
                         
                         int fadeOutStep = 0;
-                        int fadeOutMaxSteps = 20;
+                        int fadeOutMaxSteps = 24;
                         
                         _fadeOutTimer.Tick += (s3, ev3) =>
                         {
                             fadeOutStep++;
-                            double fadeProgress = EaseInCubic((double)fadeOutStep / fadeOutMaxSteps);
+                            double fadeProgress = EaseInOutQuart((double)fadeOutStep / fadeOutMaxSteps);
                             
                             // fade out
-                            this.Opacity = 0.95 * (1 - fadeProgress);
+                            this.Opacity = 0.98 * (1 - fadeProgress);
                             
                             // slide up
                             int newY = _finalPosition.Y + (int)((double)(_endPosition.Y - _finalPosition.Y) * fadeProgress);
@@ -526,33 +592,60 @@ namespace Nudge
             _animationTimer.Start();
         }
         
-        // easing for smooth animations
+        // easing functions for animations
         private double EaseOutCubic(double t) => 1 - Math.Pow(1 - t, 3);
         private double EaseInCubic(double t) => t * t * t;
+        private double EaseOutQuint(double t) => 1 - Math.Pow(1 - t, 5);
+        private double EaseInOutQuart(double t) => t < 0.5 ? 8 * t * t * t * t : 1 - Math.Pow(-2 * t + 2, 4) / 2;
 
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
             
-            // high-quality rendering
+            // good rendering
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
             
-            // create rounded corners
+            // rounded corners
             using (GraphicsPath path = new GraphicsPath())
             {
-                int radius = 6; // subtle corners
-                Rectangle rect = new Rectangle(0, 0, this.Width, this.Height);
+                int radius = 12; // ios-style corners
                 
-                // rounded rect
+                // avoid edge issues
+                Rectangle rect = new Rectangle(1, 1, this.Width - 2, this.Height - 2);
+                
+                // path for shadow and fill
                 path.AddRoundedRectangle(rect, radius);
                 
-                // set form region
-                this.Region = new Region(path);
+                // shadow effect
+                e.Graphics.DrawModernShadow(path, Color.FromArgb(60, 0, 0, 0), 4, 12, new Point(0, 3));
                 
-                // solid background
-                using (SolidBrush backgroundBrush = new SolidBrush(Color.FromArgb(230, 45, 45, 48)))
+                // region slightly larger
+                using (GraphicsPath regionPath = new GraphicsPath())
+                {
+                    Rectangle regionRect = new Rectangle(0, 0, this.Width, this.Height);
+                    regionPath.AddRoundedRectangle(regionRect, radius);
+                    this.Region = new Region(regionPath);
+                }
+                
+                // fill background
+                using (SolidBrush backgroundBrush = new SolidBrush(BackgroundColor))
                 {
                     e.Graphics.FillPath(backgroundBrush, path);
+                    
+                    // fix edge artifacts
+                    using (Pen bleedPen = new Pen(BackgroundColor, 2f))
+                    {
+                        e.Graphics.DrawPath(bleedPen, path);
+                    }
+                }
+                
+                // subtle border
+                using (Pen borderPen = new Pen(Color.FromArgb(15, 255, 255, 255), 1))
+                {
+                    e.Graphics.DrawPath(borderPen, path);
                 }
             }
         }
@@ -561,13 +654,13 @@ namespace Nudge
         {
             get
             {
-                // config for smooth rendering
+                // window settings
                 CreateParams cp = base.CreateParams;
-                cp.ExStyle |= 0x80000; // WS_EX_LAYERED - for transparency
-                cp.ExStyle |= 0x08;    // WS_EX_TOPMOST - always on top
+                cp.ExStyle |= 0x80000;   // layered for transparency
+                cp.ExStyle |= 0x08;      // always on top
                 
-                // avoid flickering
-                cp.ExStyle |= 0x02000000; // WS_EX_COMPOSITED
+                // prevent flickering
+                cp.ExStyle |= 0x02000000; // composited
                 
                 return cp;
             }
@@ -604,7 +697,7 @@ namespace Nudge
                     }
                 }
                 
-                // prevent double disposal
+                // avoid double dispose
                 _disposed = true;
             }
             
