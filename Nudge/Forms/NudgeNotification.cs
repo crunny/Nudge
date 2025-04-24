@@ -463,20 +463,20 @@ namespace Nudge
         {
             try
             {
-                // First try Assets subfolder in the application directory
+                // first try Assets subfolder in the application directory
                 string logoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "NudgeLogo.png");
                 
-                // Log the paths we're searching (helpful for debugging)
+                // log the paths we're searching (helpful for debugging)
                 System.Diagnostics.Debug.WriteLine($"Looking for logo at: {logoPath}");
                 
-                // If not found, check executable directory directly
+                // if not found, check executable directory directly
                 if (!File.Exists(logoPath))
                 {
                     logoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NudgeLogo.png");
                     System.Diagnostics.Debug.WriteLine($"Looking for logo at: {logoPath}");
                 }
                 
-                // If still not found, try one level up (for development environment)
+                // if still not found, try one level up (for development environment)
                 if (!File.Exists(logoPath))
                 {
                     string? parentDir = Path.GetDirectoryName(AppDomain.CurrentDomain.BaseDirectory);

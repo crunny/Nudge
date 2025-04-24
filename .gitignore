@@ -21,4 +21,6 @@ obj/
 # Built libraries
 *.dll         
 # Temp files
-*.tmp         
+*.tmp      
+# Solution files
+*.sln   
