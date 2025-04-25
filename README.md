@@ -2,7 +2,7 @@
   <img src="Nudge/Assets/NudgeBanner.png" width="600" alt="Nudge Banner">
 </p>
 
-A minimal, elegant clipboard notification utility for Windows.
+A minimal, clipboard notification utility for Windows.
 
 ## ✨ Overview
 
